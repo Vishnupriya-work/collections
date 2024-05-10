@@ -1,0 +1,42 @@
+SELECT final.*,
+ CASE WHEN pl_status in ('closed', 'closed_pos') THEN 0 WHEN ROUND(due_amount) > 10 THEN 1 ELSE 0 END AS fl_dq, 
+ au.state AS kyc_state, ad.state AS user_state FROM (SELECT b.user_id,
+ b.user_name AS name, b.mobile_number, 
+ CASE WHEN b.mobile_number <> cm.contact_information THEN cm.contact_information ELSE NULL END AS alternate_number,
+ u.email, s.prod_group, b.sanction_amount, b.payment_min, b.payment_max, b.principal_outstanding, 
+ ROUND(COALESCE(tb.paid_amount, 0), 2) AS paid_amount,
+ CONVERT(ROUND(b.payment_min - COALESCE(tb.amount_for_due_calc, 0), 2), CHAR(50)) AS due_amount, 
+ DATE_FORMAT(CURDATE(), '8 %M %Y') AS due_date, 
+ CONVERT(ROUND(b.payment_max - COALESCE(tb.amount_for_due_calc, 0), 2), CHAR(50)) AS total_outstanding, 
+ b.DPD, DATE_FORMAT(tb.created_time, '%Y-%m-%d %H:%i:%s') AS payment_time, s.fl_active, s.block_code, 
+ s.is_enach_setup_done, s.fl_block_paynow, b.fl_auto_debit, b.short_payment_url, d.lang, b.short_url, 
+ l.status AS pl_status FROM billing_info b LEFT JOIN sanction s
+ ON b.user_id = s.user_id
+ LEFT JOIN user u ON b.user_id = u.id 
+ LEFT JOIN (SELECT user_id, questions_response ->> '$[0]."options"[0]."option_text"' AS lang 
+ FROM questionnaire_response 
+ WHERE id IN (SELECT MAX(id) FROM questionnaire_response GROUP BY user_id) ) d 
+ ON b.user_id = d.user_id LEFT JOIN (SELECT user_id, contact_information AS alt_number, 
+ contact_type FROM contact_master WHERE contact_type = 102 AND 
+ id IN (SELECT MAX(id) FROM contact_master GROUP BY user_id) ) e 
+ ON b.user_id = e.user_id 
+ LEFT JOIN (SELECT user_id, contact_information FROM contact_master 
+ WHERE id IN (SELECT MAX(id) FROM contact_master GROUP BY user_id) ) cm 
+ ON b.user_id = cm.user_id LEFT JOIN (SELECT tbl.user_id, SUM(tbl.amount_for_due_calc) AS amount_for_due_calc, 
+ SUM(tbl.paid_amount) AS paid_amount, MAX(created_time) AS created_time 
+ FROM (SELECT user_id, amount AS amount_for_due_calc, 
+ CASE WHEN event IN ('easebuzz_pay_back_link', 'nach_pull') THEN amount ELSE 0 END AS paid_amount, 
+ created_time FROM repayment_details WHERE created_time >= '2024-05-01 00:00:00' AND created_time < '2024-06-10 00:00:00' 
+ AND event IN ('easebuzz_pay_back_link', 'nach_pull', 'manual_waiver')
+ UNION ALL SELECT user_id, 
+ amount AS amount_for_due_calc, amount AS paid_amount, created_time 
+ FROM pay_now_summary WHERE created_time >= '2024-05-01 00:00:00' AND created_time < '2024-06-10 00:00:00' 
+ AND status = 'success' ) tbl GROUP BY tbl.user_id) tb 
+ ON b.user_id = tb.user_id 
+ LEFT JOIN (SELECT * FROM loan_details_master 
+ WHERE user_id IN (SELECT user_id FROM sanction WHERE prod_group = 'PL')) l 
+ ON b.user_id = l.user_id WHERE b.billing_cycle = '202404' ) final 
+ LEFT JOIN (SELECT * FROM user_address WHERE id IN (SELECT MAX(id) 
+ FROM user_address GROUP BY user_id)) ad ON final.user_id = ad.user_id 
+LEFT JOIN (SELECT * FROM kycdetails WHERE id IN (SELECT MAX(id) FROM kycdetails GROUP BY user_id)) au 
+ON final.user_id = au.user_id;
