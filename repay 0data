@@ -1,0 +1,13 @@
+SELECT k.*, prod_group
+FROM (
+	SELECT p.user_id, substr(STR_TO_DATE(p.created_time,'%Y-%m-%d'),1,10) AS payment_time, p.amount, transaction_id, 'pay_now' as pay_mode
+	FROM pay_now_summary AS p
+	WHERE p.`status` = 'success'
+	UNION all
+	SELECT rp.user_id, substr(STR_TO_DATE(rp.payment_time,'%Y-%m-%d'),1,10) AS payment_time, rp.amount, asp_request_id as transaction_id, event as pay_mode
+	FROM repayment_details AS rp
+	) AS k
+    left join sanction s on k.user_id = s.user_id
+WHERE payment_time >= date_add(curdate(),interval -DAY(CURDATE())+1 DAY)
+
+order by 1 desc;
